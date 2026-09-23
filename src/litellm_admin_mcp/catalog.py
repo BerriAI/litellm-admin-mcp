@@ -11,10 +11,11 @@ class Operation:
     path: str
     operation_id: str
     summary: str
+    read_only_override: bool | None = None
 
     @property
     def read_only(self) -> bool:
-        return self.method == "GET"
+        return self.method == "GET" if self.read_only_override is None else self.read_only_override
 
 
 OPERATIONS = tuple(Operation(**entry) for entry in json.loads(

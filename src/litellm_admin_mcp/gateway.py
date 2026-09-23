@@ -12,7 +12,20 @@ from mcp import types
 
 from .catalog import BY_NAME, OPERATIONS
 from .config import Config
-from .schema import SchemaError, tool_schema
+from .schema import SchemaError, discovery_schema, tool_schema
+from .results import (MAX_RESULT_BYTES, PAGE_BYTES, READ_SCHEMA, RESPONSE_SCHEMA,
+                      ResultError, ResultStore, encode, page, select)
+
+
+DESCRIBE_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["name"],
+    "properties": {"name": {"type": "string", "description": "Exact name of an enabled administrative tool."},
+                   "response": RESPONSE_SCHEMA},
+}
+HELPERS = {
+    "describe_admin_tool": (DESCRIBE_SCHEMA, "Read the complete input schema and annotations of an enabled tool, including all advanced arguments and referenced definitions. Required before using a tool in discovery schema mode. Returns full detail by default; response.view=compact pages unusually large schemas."),
+    "read_admin_result": (READ_SCHEMA, "Read an exact saved result without re-executing its operation. Browse fields, array items and string chunks using returned paths/next arguments. view=full returns the entire selected value. Snapshots expire after five minutes; never repeat a write to recover its response."),
+}
 
 
 class AdminError(Exception):
@@ -66,6 +79,7 @@ class Gateway:
         self._tools: dict[str, types.Tool] | None = None
         self._loaded_at = 0.0
         self._schema_lock = asyncio.Lock()
+        self.results = ResultStore()
 
     async def __aenter__(self):
         if self.client is None:
@@ -73,26 +87,32 @@ class Gateway:
         return self
 
     async def __aexit__(self, *args):
+        self.results.clear()
         if self._owns_client and self.client is not None:
             await self.client.aclose()
             self.client = None
 
-    async def _request(self, method: str, path: str, credential: str, **kwargs) -> Any:
+    async def _request(self, method: str, path: str, credential: str, *,
+                       read_only: bool | None = None, max_bytes: int = 2_000_000, **kwargs) -> Any:
         assert self.client is not None
-        write = method != "GET"
+        write = method != "GET" if read_only is None else not read_only
         uncertain = " Check gateway state before retrying this change." if write else ""
         try:
-            result = await self.client.request(method, self.config.base_url + path,
-                headers={"Authorization": "Bearer " + valid_credential(credential), "Cookie": "", **kwargs.pop("headers", {})},
-                follow_redirects=False, **kwargs)
+            async with self.client.stream(method, self.config.base_url + path,
+                    headers={"Authorization": "Bearer " + valid_credential(credential), "Cookie": "", **kwargs.pop("headers", {})},
+                    follow_redirects=False, **kwargs) as result:
+                if not 200 <= result.status_code < 300:
+                    raise AdminError(f"Gateway returned HTTP {result.status_code}." + uncertain, result.status_code)
+                chunks, size = [], 0
+                async for chunk in result.aiter_bytes():
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise AdminError("Result exceeds the upstream byte limit; use pagination or a narrower query." + uncertain)
+                    chunks.append(chunk)
         except httpx2.RequestError:
             raise AdminError("Gateway request could not be completed." + uncertain, 504) from None
-        if not 200 <= result.status_code < 300:
-            raise AdminError(f"Gateway returned HTTP {result.status_code}." + uncertain, result.status_code)
-        if len(result.content) > 2_000_000 and path != "/openapi.json":
-            raise AdminError("Result is too large; use pagination or a narrower query." + uncertain)
         try:
-            return result.json()
+            return json.loads(b"".join(chunks))
         except ValueError:
             raise AdminError("Gateway returned an invalid JSON response." + uncertain, 502) from None
 
@@ -108,10 +128,22 @@ class Gateway:
 
     async def tools(self, credential: str) -> dict[str, types.Tool]:
         await self.authorize(credential)
+        canonical = await self._load_tools(credential)
+        visible = {}
+        for name, tool in canonical.items():
+            visible[name] = (tool.model_copy(update={"input_schema": discovery_schema(tool.input_schema, name),
+                "description": tool.description + " Call describe_admin_tool for the complete argument schema before use."})
+                if self.config.schema_mode == "discovery" else tool)
+        for name, (schema, description) in HELPERS.items():
+            visible[name] = types.Tool(name=name, description=description, inputSchema=schema,
+                annotations=types.ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+        return visible
+
+    async def _load_tools(self, credential: str) -> dict[str, types.Tool]:
         async with self._schema_lock:
             if self._tools is not None and time.monotonic() - self._loaded_at < 300:
                 return self._tools
-            spec = await self._request("GET", "/openapi.json", credential)
+            spec = await self._request("GET", "/openapi.json", credential, max_bytes=64_000_000)
             if not isinstance(spec, dict) or not isinstance(spec.get("paths"), dict):
                 raise AdminError("Gateway OpenAPI schema is unavailable.", 503)
             selected = {}
@@ -128,6 +160,7 @@ class Gateway:
                     raise AdminError(f"Gateway operation changed for {item.name}; update the connector before using it.", 503)
                 try:
                     schema = tool_schema(spec, path, operation)
+                    schema["properties"]["response"] = RESPONSE_SCHEMA
                     jsonschema.Draft202012Validator.check_schema(schema)
                 except (SchemaError, jsonschema.SchemaError, TypeError, KeyError):
                     raise AdminError(f"Gateway schema is unsupported for {item.name}.", 503) from None
@@ -146,13 +179,65 @@ class Gateway:
             return selected
 
     async def call(self, name: str, arguments: dict, credential: str) -> Any:
-        available = await self.tools(credential)
-        if name not in available:
+        # No redundant call to tools(): execution and disclosure each have a
+        # fresh authorization check. Roles/identities are never cached.
+        principal = await self.authorize(credential)
+        loaded_at = self._loaded_at
+        available = await self._load_tools(credential)
+        if name not in available and name not in HELPERS:
             raise AdminError("This tool is not enabled for this connector.", 403)
         try:
-            jsonschema.Draft202012Validator(available[name].input_schema).validate(arguments)
-        except jsonschema.ValidationError:
-            raise AdminError("Arguments do not match the discovered tool schema.") from None
+            schema = HELPERS[name][0] if name in HELPERS else available[name].input_schema
+            jsonschema.Draft202012Validator(schema).validate(arguments)
+        except jsonschema.ValidationError as exc:
+            location = "/" + "/".join(str(p) for p in exc.absolute_path)
+            raise AdminError(f"Arguments do not match the complete tool schema at {location}. Use describe_admin_tool for all accepted fields.") from None
+        if name in HELPERS:
+            return await self._helper(name, arguments, credential, principal, available)
+        if loaded_at != self._loaded_at:
+            # Discovery awaited upstream I/O; check the original principal
+            # again before execution, without caching or rebinding identity.
+            await self._verify(credential, principal)
+        view = arguments.get("response", {}).get("view", self.config.response_view)
+        return await self._execute(name, arguments, credential, principal, view)
+
+    async def _verify(self, credential: str, principal: str):
+        if await self.authorize(credential) != principal:
+            raise AdminError("Admin identity changed during the request. Inspect gateway state before retrying.", 403)
+
+    def _view(self, name: str, value: Any, credential: str, principal: str, view: str) -> Any:
+        if view == "compact" and len(encode(value)) > PAGE_BYTES:
+            token = self.results.put(name, value, credential, principal)
+            if token is not None:
+                return page(self.results.get(token, credential, principal), token)
+        return value
+
+    async def _helper(self, name, arguments, credential, principal, available):
+        try:
+            if name == "describe_admin_tool":
+                target = arguments["name"]
+                if target not in available:
+                    raise AdminError("This tool is not enabled for this connector.", 403)
+                result = available[target].model_dump(by_alias=True, exclude_none=True, mode="json")
+                await self._verify(credential, principal)
+                return self._view("schema:" + target, result, credential, principal,
+                                  arguments.get("response", {}).get("view", "full"))
+            token = arguments["result_id"]
+            item = self.results.get(token, credential, principal)
+            if item.source.removeprefix("schema:") not in available:
+                raise AdminError("The source operation is no longer enabled.", 403)
+            if arguments.get("view", "page") == "full":
+                if any(k in arguments for k in ("offset", "limit", "max_chars")):
+                    raise AdminError("Full reads do not accept pagination arguments.")
+                result = select(json.loads(item.raw), arguments.get("path", ""))
+            else:
+                result = page(item, token, **{k: v for k, v in arguments.items() if k not in {"result_id", "view"}})
+            await self._verify(credential, principal)
+            return result
+        except ResultError as exc:
+            raise AdminError(str(exc), 404) from None
+
+    async def _execute(self, name, arguments, credential, principal, view):
         item = BY_NAME[name]
         path = item.path
         for field, value in arguments.get("path", {}).items():
@@ -166,10 +251,16 @@ class Gateway:
                 continue
             for part in value if isinstance(value, list) else [value]:
                 query.append((field, json.dumps(part) if isinstance(part, (dict, bool)) else str(part)))
-        principal = await self.authorize(credential)
-        result = await self._request(item.method, path, credential, params=query,
-            **({"json": arguments["body"]} if "body" in arguments else {}),
-            headers={"litellm-changed-by": principal})
-        if await self.authorize(credential) != principal:
-            raise AdminError("Admin identity changed during the request. Inspect gateway state before retrying.", 403)
-        return safe_result(result, credential)
+        body, headers = {}, {"litellm-changed-by": principal}
+        if "body" in arguments:
+            if arguments["body"] is None:
+                # httpx's json=None means "no body", not the JSON value null.
+                body = {"content": b"null"}
+                headers["Content-Type"] = "application/json"
+            else:
+                body = {"json": arguments["body"]}
+        result = await self._request(item.method, path, credential, params=query, **body,
+            read_only=item.read_only, max_bytes=MAX_RESULT_BYTES,
+            headers=headers)
+        await self._verify(credential, principal)
+        return self._view(name, safe_result(result, credential), credential, principal, view)

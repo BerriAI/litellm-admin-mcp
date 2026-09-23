@@ -39,13 +39,17 @@ def create_server(gateway: Gateway, *, http: bool = False) -> Server:
     async def call_tool(context, params):
         try:
             result = await gateway.call(params.name, params.arguments or {}, credential(context))
-            return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(result))])
+            return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(result, ensure_ascii=False, separators=(",", ":")))])
         except AdminError as exc:
             return types.CallToolResult(isError=True, content=[types.TextContent(type="text", text=str(exc))])
 
     return Server("litellm-admin-mcp", version=__version__,
         instructions="Administer the connected LiteLLM gateway only when the user requests it. "
         "Discover exact tool schemas; arguments are grouped under body, query and path. "
+        "In discovery schema mode, call describe_admin_tool before using an operation; it returns ALL supported arguments. "
+        "response.view=compact keeps small results whole and indexes large results. An incomplete preview is not an empty or complete result. "
+        "Use read_admin_result with returned paths/next arguments for every relevant omitted field; full reads preserve all original data. "
+        "Never re-execute a write to change its response view. New virtual keys are always delivered inline. "
         "Look up resource identifiers before making changes and verify changes afterward. "
         "Use named gateway credentials or environment references for provider authentication. "
         "Do not request provider secrets in chat. A newly created virtual key is sensitive: deliver it only to its requester. "

@@ -62,9 +62,93 @@ ID fails discovery until the connector is updated. Tools have stable names such
 as `create_key`, `add_model`, `list_teams` and `update_budget`; their arguments are
 grouped into `body`, `query` and `path` to avoid ambiguous parameter names.
 
-Set `LITELLM_ADMIN_READ_ONLY=true` to expose only GET operations. Optionally set
+Set `LITELLM_ADMIN_READ_ONLY=true` to expose only reviewed read operations (including
+the POST reads `get_budgets` and `get_organization_legacy`). Optionally set
 `LITELLM_ADMIN_TOOLS=create_key,list_keys,list_teams` to restrict the catalog.
 The gateway still enforces each caller's permissions and feature entitlements.
+
+## Efficient results and tool discovery
+
+The default keeps small results complete and pages large results. All 65 actions,
+advanced arguments and previously accessible result fields remain available.
+There are two additional read-only tools: `describe_admin_tool` and
+`read_admin_result`.
+
+### Results: complete records, then exact detail reads
+
+Results up to 16 KB of compact JSON are returned whole. Larger results return an
+index with complete small values, useful record previews, unread field counts,
+and exact `read` / `next` arguments for `read_admin_result`. This uses structural
+paging, not a whitelist of "important" fields or an AI-generated summary.
+Unknown metadata, `null`, `0`, `false`, empty arrays and empty objects are preserved.
+A preview with `complete: false` is not the entire record; read the relevant
+omitted fields before drawing conclusions. For example, a user profile can stay
+complete while its embedded keys and teams are read separately.
+
+To retrieve detail, call `read_admin_result` with the returned `read` arguments.
+Follow `next` to enumerate every object field or array item. Paths are JSON
+Pointers supplied by the index; string chunks use Unicode code-point offsets.
+To retrieve the entire original result in one response, use its `full_read`
+arguments (an empty path selects the root):
+
+```json
+{"result_id": "<returned-result-id>", "path": "", "view": "full"}
+```
+
+These reads use the same saved result, even if gateway data changes. Reading a
+write's result never repeats the write. **Do not repeat a create, rotate or delete
+operation just to request a different response view.** Newly created/rotated keys
+are always delivered inline in the full result and are never cached.
+
+Every administrative tool also accepts `response: {"view": "full"}` to request
+an inline result on its initial call. Set `LITELLM_ADMIN_RESPONSE_VIEW=full` to make
+that the process default. Neither setting changes the gateway query, its scope,
+or the existing secret-redaction rules.
+
+Snapshots are bound to both the caller's credential and current admin identity,
+and expire after five minutes. Each read rechecks authorization before releasing
+data. The in-memory store admits at most 16 snapshots per credential and 64 MB of
+serialized data in total; it never evicts an unexpired result to make room. When
+full, or when a result contains recognizable credentials, the original complete
+response is returned inline instead. Expired entries are removed on the next
+cache access; shutdown clears the store. HTTP deployments with multiple workers
+must route subsequent result reads to the same process. A missing/expired result
+does not authorize repeating a write.
+
+Collection pages target 16 KB plus index overhead, up to 20 entries by default;
+large individual fields remain explicitly retrievable. Administrative calls
+stream at most 16 MB from the gateway in either view, replacing the previous
+2 MB limit checked after downloading the entire response. Use upstream pagination
+or filters for larger queries. Explicit full reads can be large: request pages
+if the client has an output limit.
+
+### Tool search: use the client's native discovery
+
+By default, the server publishes ordinary named MCP tools with their complete
+input schemas and individual safety annotations. A client such as Codex can use
+native tool search/deferred loading with this interface; no custom dispatcher or
+second schema lookup is required. The client controls whether definitions enter
+model context eagerly or on demand. The size of `tools/list` is not a measurement
+of initial model tokens. See OpenAI's [tool search documentation](https://developers.openai.com/api/docs/guides/tools-tool-search).
+
+For a client that loads every schema upfront, an optional fallback is available:
+
+```sh
+export LITELLM_ADMIN_SCHEMA_MODE=discovery
+```
+
+This keeps all original tool names, descriptions, required argument groups and
+safety annotations, while deferring parameter detail. Before an operation, the
+agent calls `describe_admin_tool` with its exact name to obtain **every** supported
+argument, constraint, default, example and referenced definition, then calls the
+original named tool. Execution still validates the complete gateway schema.
+This mode intentionally uses permissive argument declarations; it is not native
+tool search and adds a schema lookup. Prefer the default `full` schema mode when
+the client already supports native tool search. The helper can also page an
+unusually large schema with `response: {"view": "compact"}`.
+
+The tool allowlist and read-only policy apply to discovery and direct execution
+in both modes. Helpers cannot invoke administrative operations or arbitrary URLs.
 
 ## Host an HTTP connector
 
@@ -139,6 +223,7 @@ MCP, since endpoint availability depends on the gateway release.
 uv venv --python 3.12
 uv pip install -e '.[test]'
 uv run --extra test pytest
+uv run python scripts/benchmark_efficiency.py
 uv build
 docker build -t litellm-admin-mcp:smoke .
 python scripts/smoke_container.py
@@ -147,6 +232,10 @@ python scripts/smoke_container.py
 Tests use real MCP sessions with instrumented gateway fixtures; they do not call
 an LLM or modify a production gateway. See [SECURITY.md](SECURITY.md) for the
 credential boundary and [CONTRIBUTING.md](CONTRIBUTING.md) for adding tools.
+The synthetic benchmark verifies exact reconstruction and reports both the first
+page and the cost of retrieving every field; optional `tiktoken` installation adds
+comparison token counts. It does not measure client startup context or agent
+reasoning quality.
 
 ## License
 

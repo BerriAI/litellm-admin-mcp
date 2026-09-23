@@ -6,6 +6,7 @@ import sys
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 import httpx2
+import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
@@ -13,7 +14,7 @@ import uvicorn
 
 from conftest import data
 from litellm_admin_mcp.config import Config
-from litellm_admin_mcp.gateway import Gateway
+from litellm_admin_mcp.gateway import Gateway, HELPERS
 from litellm_admin_mcp.server import create_http_app
 
 
@@ -34,9 +35,10 @@ async def serve(app):
         await task
 
 
-async def test_streamable_http_rejects_anonymous_and_keeps_callers_separate(stub):
+@pytest.mark.parametrize("schema_mode", ["full", "discovery"])
+async def test_streamable_http_rejects_anonymous_and_keeps_callers_separate(stub, schema_mode):
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(stub.handle)) as upstream:
-        app = create_http_app(Gateway(Config("https://gateway.example.com"), upstream))
+        app = create_http_app(Gateway(Config("https://gateway.example.com", schema_mode=schema_mode), upstream))
         async with serve(app) as base:
             async with httpx2.AsyncClient() as anonymous:
                 assert (await anonymous.get(base + "/healthz")).status_code == 200
@@ -50,6 +52,12 @@ async def test_streamable_http_rejects_anonymous_and_keeps_callers_separate(stub
                             assert "create_key" in {t.name for t in (await session.list_tools()).tools}
                             result = data(await session.call_tool("create_key", {"body": {"key_alias": credential}}))
                             assert result["key"] == "sk-created-for-[credential redacted]"
+                            if credential == "alice-admin":
+                                stub.keys = [{"metadata": "x" * 25000}]
+                                saved = data(await session.call_tool("list_keys", {}))
+                                assert data(await session.call_tool("read_admin_result", saved["full_read"])) == {"keys": stub.keys}
+                            else:
+                                assert (await session.call_tool("read_admin_result", saved["full_read"])).is_error
     assert [r.headers["Authorization"] for r in stub.writes] == ["Bearer alice-admin", "Bearer bob-admin"]
 
 
@@ -71,8 +79,11 @@ async def test_packaged_stdio_process_uses_only_explicit_gateway_credential(stub
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
-                assert {t.name for t in (await session.list_tools()).tools} == {"list_keys", "create_key"}
+                assert {t.name for t in (await session.list_tools()).tools} == {"list_keys", "create_key"} | HELPERS.keys()
                 created = data(await session.call_tool("create_key", {"body": {"key_alias": "stdio"}}))
                 assert created["key_alias"] == "stdio"
+                stub.keys = [{"metadata": "x" * 25000}]
+                saved = data(await session.call_tool("list_keys", {}))
+                assert data(await session.call_tool("read_admin_result", saved["full_read"])) == {"keys": stub.keys}
     assert len(stub.writes) == 1
     assert "unrelated-slack-secret" not in json.dumps([dict(r.headers) for r in stub.requests])

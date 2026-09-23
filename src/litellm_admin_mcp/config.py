@@ -40,9 +40,15 @@ class Config:
     read_only: bool = False
     allowed_tools: frozenset[str] = frozenset()
     public_url: str = ""
+    response_view: str = "compact"
+    schema_mode: str = "full"
 
     def __post_init__(self):
         object.__setattr__(self, "base_url", gateway_origin(self.base_url))
+        if self.response_view not in {"full", "compact"}:
+            raise ValueError("LITELLM_ADMIN_RESPONSE_VIEW must be full or compact")
+        if self.schema_mode not in {"full", "discovery"}:
+            raise ValueError("LITELLM_ADMIN_SCHEMA_MODE must be full or discovery")
         if self.allowed_tools - BY_NAME.keys():
             raise ValueError("LITELLM_ADMIN_TOOLS contains unknown tool names; inspect the published tool catalog.")
         if self.public_url:
@@ -58,4 +64,6 @@ class Config:
             read_only=env_bool("LITELLM_ADMIN_READ_ONLY"),
             allowed_tools=frozenset(x.strip() for x in os.getenv("LITELLM_ADMIN_TOOLS", "").split(",") if x.strip()),
             public_url=os.getenv("LITELLM_MCP_PUBLIC_URL", "").rstrip("/"),
+            response_view=os.getenv("LITELLM_ADMIN_RESPONSE_VIEW", "compact").strip(),
+            schema_mode=os.getenv("LITELLM_ADMIN_SCHEMA_MODE", "full").strip(),
         )

@@ -24,21 +24,21 @@
     "method": "POST",
     "path": "/key/generate",
     "operation_id": "generate_key_fn_key_generate_post",
-    "summary": "Generate Key Fn",
+    "summary": "Create a virtual key with model access, budgets and rate limits",
     "name": "create_key"
   },
   {
     "method": "POST",
     "path": "/key/service-account/generate",
     "operation_id": "generate_service_account_key_fn_key_service_account_generate_post",
-    "summary": "Generate Service Account Key Fn",
+    "summary": "Create a team-owned service account key",
     "name": "create_service_account_key"
   },
   {
     "method": "POST",
     "path": "/key/update",
     "operation_id": "update_key_fn_key_update_post",
-    "summary": "Update Key Fn",
+    "summary": "Update a virtual key and its access or spending limits",
     "name": "update_key"
   },
   {
@@ -66,21 +66,21 @@
     "method": "GET",
     "path": "/key/info",
     "operation_id": "info_key_fn_key_info_get",
-    "summary": "Info Key Fn",
+    "summary": "Inspect a virtual key, its scope, budget, expiry and configuration",
     "name": "get_key"
   },
   {
     "method": "POST",
     "path": "/key/regenerate",
     "operation_id": "regenerate_key_fn_key_regenerate_post",
-    "summary": "Regenerate Key Fn",
+    "summary": "Rotate a virtual key using a body identifier",
     "name": "regenerate_key"
   },
   {
     "method": "POST",
     "path": "/key/{key}/regenerate",
     "operation_id": "regenerate_key_fn_key__key__regenerate_post",
-    "summary": "Regenerate Key Fn",
+    "summary": "Rotate a virtual key using a path identifier",
     "name": "regenerate_key_by_id"
   },
   {
@@ -94,7 +94,7 @@
     "method": "GET",
     "path": "/key/list",
     "operation_id": "list_keys_key_list_get",
-    "summary": "List Keys",
+    "summary": "List virtual keys with pagination, filters and optional full records",
     "name": "list_keys"
   },
   {
@@ -122,14 +122,14 @@
     "method": "POST",
     "path": "/key/health",
     "operation_id": "key_health_key_health_post",
-    "summary": "Key Health",
+    "summary": "Check the caller credential; this can emit callback test logs",
     "name": "check_key_health"
   },
   {
     "method": "GET",
     "path": "/user/info",
     "operation_id": "user_info_user_info_get",
-    "summary": "User Info",
+    "summary": "Inspect user information; omitting user_id as an admin can include gateway-wide related keys and teams",
     "name": "get_user"
   },
   {
@@ -227,7 +227,7 @@
     "method": "GET",
     "path": "/team/{team_id}/members/me",
     "operation_id": "team_member_me_team__team_id__members_me_get",
-    "summary": "Team Member Me",
+    "summary": "Inspect the caller membership in a selected team",
     "name": "get_my_team_membership"
   },
   {
@@ -255,7 +255,7 @@
     "method": "GET",
     "path": "/team/available",
     "operation_id": "list_available_teams_team_available_get",
-    "summary": "List Available Teams",
+    "summary": "List teams available in the caller membership scope",
     "name": "list_available_teams"
   },
   {
@@ -346,8 +346,9 @@
     "method": "POST",
     "path": "/organization/info",
     "operation_id": "deprecated_info_organization_organization_info_post",
-    "summary": "Deprecated Info Organization",
-    "name": "get_organization_legacy"
+    "summary": "Read organization details through the legacy POST endpoint",
+    "name": "get_organization_legacy",
+    "read_only_override": true
   },
   {
     "method": "GET",
@@ -430,8 +431,9 @@
     "method": "POST",
     "path": "/budget/info",
     "operation_id": "info_budget_budget_info_post",
-    "summary": "Info Budget",
-    "name": "get_budgets"
+    "summary": "Read selected budget records",
+    "name": "get_budgets",
+    "read_only_override": true
   },
   {
     "method": "GET",

@@ -10,6 +10,22 @@ to start HTTP mode with a process-wide gateway key. The gateway's live proxy-adm
 role is checked for discovery, before execution and before returning results.
 The caller's own key remains the execution identity and audit actor.
 
+Large sanitized results can be retained as short-lived in-memory snapshots.
+Handles are unguessable and bound to both a keyed digest of the requesting
+credential and the verified principal; another admin cannot read them. Each
+read checks the current role before and after access. Raw caller credentials
+are not stored in the cache. Secret-returning key operations and results with
+recognizable credentials bypass it and return their complete response inline.
+Snapshot reads never re-execute the original operation. Expiration and capacity
+limits are documented in the README; use the same server process for subsequent
+reads. The existing result redaction policy is unchanged.
+
+Full schemas remain the default, including for native client tool search. The
+optional lightweight discovery mode retains individual tool names and safety
+annotations. It only changes advertised parameter detail: the full live schema
+still validates every call. Schema/result helpers are read-only, respect the
+operation allowlist and cannot act as a generic execution dispatcher.
+
 Read-only mode and the tool allowlist are enforced by the server, including on
 direct calls to tools hidden from discovery. Model-returned provider parameters
 are restricted to model and credential-name identifiers. New virtual keys are

@@ -82,6 +82,48 @@ def tool_schema(spec: dict, path_item: dict, operation: dict) -> dict:
         return result
 
     result = rewrite(root)
+    # Some clients render a referenced top-level body as `unknown`. Inline that
+    # one level, preserving every field and constraint, then retain only the
+    # definitions still needed (including recursive references).
+    body = result["properties"].get("body", {})
+    if set(body) == {"$ref"}:
+        name = body["$ref"].removeprefix("#/$defs/").replace("~1", "/").replace("~0", "~")
+        result["properties"]["body"] = deepcopy(definitions[name])
+    reachable = set()
+
+    def visit(value):
+        if isinstance(value, dict):
+            ref = value.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/$defs/"):
+                name = ref.removeprefix("#/$defs/").replace("~1", "/").replace("~0", "~")
+                if name not in reachable:
+                    reachable.add(name)
+                    visit(definitions[name])
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(result)
+    definitions = {name: value for name, value in definitions.items() if name in reachable}
     if definitions:
         result["$defs"] = definitions
+    return result
+
+
+def discovery_schema(schema: dict, name: str) -> dict:
+    """Keep named tools/approval boundaries while deferring parameter detail.
+
+    This fallback declaration accepts the same body/query/path shapes, including
+    scalar or array bodies. Execution ALWAYS validates the complete schema.
+    No constraints are guessed from a small subset of commonly used fields.
+    """
+    result = {"type": "object", "additionalProperties": False, "properties": {}}
+    for group in schema["properties"]:
+        result["properties"][group] = (deepcopy(schema["properties"][group]) if group == "response" else {
+            "description": f"Before calling {name}, use describe_admin_tool with name={name} for the complete {group} schema. All original fields remain supported and are validated on execution."
+        })
+    if schema.get("required"):
+        result["required"] = list(schema["required"])
     return result
