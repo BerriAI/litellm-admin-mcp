@@ -83,7 +83,7 @@ class Gateway:
         uncertain = " Check gateway state before retrying this change." if write else ""
         try:
             result = await self.client.request(method, self.config.base_url + path,
-                headers={"Authorization": "Bearer " + valid_credential(credential), **kwargs.pop("headers", {})},
+                headers={"Authorization": "Bearer " + valid_credential(credential), "Cookie": "", **kwargs.pop("headers", {})},
                 follow_redirects=False, **kwargs)
         except httpx2.RequestError:
             raise AdminError("Gateway request could not be completed." + uncertain, 504) from None

@@ -135,3 +135,18 @@ def test_schema_names_with_json_pointer_escapes():
     jsonschema.Draft202012Validator(schema).validate({"body": 3})
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.Draft202012Validator(schema).validate({"body": "wrong"})
+
+
+async def test_shared_http_client_never_replays_another_callers_gateway_cookie(stub):
+    from litellm_admin_mcp.gateway import Gateway
+    original = stub.handle
+    def handle(request):
+        assert not request.headers.get("cookie")
+        result = original(request)
+        result.headers["set-cookie"] = "gateway-session=first-caller; Path=/"
+        return result
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
+        gateway = Gateway(Config("https://gateway.example.com"), client)
+        for key in ("alice-admin", "bob-admin"):
+            await gateway.call("create_key", {"body": {"key_alias": key}}, key)
+    assert len(stub.writes) == 2
