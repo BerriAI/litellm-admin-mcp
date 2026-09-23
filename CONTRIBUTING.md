@@ -1,7 +1,7 @@
 # Contributing
 
 Open a pull request with the behavior change and its tests. Python 3.12 is the
-tested runtime. Run `uv pip install -e '.[test]'` and `uv run pytest` before
+tested runtime. Run `uv pip install -e '.[test]'` and `uv run --extra test pytest` before
 submitting; CI also builds the distribution and container.
 
 To add an operation, update `src/litellm_admin_mcp/operations.json` with its exact
