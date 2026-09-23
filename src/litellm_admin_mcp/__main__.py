@@ -1,0 +1,43 @@
+import argparse
+import asyncio
+import logging
+import sys
+
+from mcp.server.stdio import stdio_server
+import uvicorn
+
+from .config import Config
+from .gateway import Gateway, valid_credential
+from .server import create_http_app, create_server
+
+
+async def run_stdio(config: Config):
+    valid_credential(config.api_key)
+    async with Gateway(config) as gateway, stdio_server() as (read, write):
+        server = create_server(gateway)
+        await server.run(read, write, server.create_initialization_options())
+
+
+def main():
+    parser = argparse.ArgumentParser(description="LiteLLM Admin MCP connector")
+    parser.add_argument("--transport", choices=["stdio", "streamable-http"], default="stdio")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8080)
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.WARNING, stream=sys.stderr)
+    try:
+        config = Config.read()
+        if args.transport == "stdio":
+            asyncio.run(run_stdio(config))
+        else:
+            uvicorn.run(create_http_app(Gateway(config)), host=args.host, port=args.port,
+                        log_level="warning", access_log=False)
+    except KeyboardInterrupt:
+        pass
+    except Exception as exc:
+        # Transport exceptions can include response bodies/headers. Do not print them.
+        parser.exit(1, f"LiteLLM Admin MCP could not start ({type(exc).__name__}). Check its configuration and gateway connection.\n")
+
+
+if __name__ == "__main__":
+    main()
