@@ -44,7 +44,9 @@ def create_server(gateway: Gateway, *, http: bool = False) -> Server:
             return types.CallToolResult(isError=True, content=[types.TextContent(type="text", text=str(exc))])
 
     return Server("litellm-admin-mcp", version=__version__,
-        instructions="Administer the connected LiteLLM gateway only when the user requests it. "
+        instructions="Use these tools for the connected LiteLLM gateway's virtual keys, teams and members, budgets, "
+        "model deployments, spending, activity and request logs. Search for these tools when the user asks to inspect "
+        "or administer those resources. A current proxy-admin identity is required. Make changes only when requested. "
         "Discover exact tool schemas; arguments are grouped under body, query and path. "
         "In discovery schema mode, call describe_admin_tool before using an operation; it returns ALL supported arguments. "
         "response.view=compact keeps small results whole and indexes large results. An incomplete preview is not an empty or complete result. "

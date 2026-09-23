@@ -150,6 +150,42 @@ unusually large schema with `response: {"view": "compact"}`.
 The tool allowlist and read-only policy apply to discovery and direct execution
 in both modes. Helpers cannot invoke administrative operations or arbitrary URLs.
 
+### Client compatibility
+
+Official documentation checked on September 23, 2026. The server uses standard
+MCP tools over stdio or Streamable HTTP, so clients control native search and
+deferred loading. These are documentation-based compatibility conclusions, not
+end-to-end tests inside each application.
+
+| Client | Documented discovery behavior | Suggested schema mode |
+| --- | --- | --- |
+| [Claude Code](https://code.claude.com/docs/en/mcp#scale-with-mcp-tool-search) | MCP tool search is on by default for supported models/providers. Tool names and server instructions load first; full definitions load when needed. | Keep the default `full`. |
+| [Cursor](https://cursor.com/blog/dynamic-context-discovery#4-efficiently-loading-only-the-mcp-tools-needed) | Dynamic MCP discovery keeps definitions in files and loads relevant tools on demand. | Keep the default `full`. |
+| [VS Code / GitHub Copilot](https://code.visualstudio.com/docs/agents/reference/ai-settings) | Experimental `github.copilot.chat.virtualTools.threshold` groups tools for on-demand activation; its documented default threshold is 128 tools. This connector's 67 tools alone do not cross that threshold. | Keep `full` with client-side discovery; consider `discovery` if the client eagerly loads the catalog. |
+| [OpenCode](https://opencode.ai/docs/mcp-servers/) | Supports local and remote MCP servers. Its MCP, tools and configuration docs do not establish native tool search and explicitly warn about tool context cost. | `full` works as a standard MCP interface; `discovery` is the fallback to reduce eager schema loading. |
+
+Claude Code requires a model/provider supporting `tool_reference` blocks. Its
+current docs list Claude 4.5-generation models and later. It normally disables
+tool search if **model traffic** uses a non-first-party `ANTHROPIC_BASE_URL`.
+`ENABLE_TOOL_SEARCH=true` can override that proxy fallback only if the proxy
+supports the required blocks; other provider or organization restrictions may
+still apply. Pointing this MCP at a LiteLLM gateway with `LITELLM_BASE_URL` is a
+separate setting and does not itself change Claude Code's model provider.
+
+Claude Code recommends concise server instructions explaining the tool categories
+and when to search. This server provides those instructions and keeps them below
+its documented default 2,048-character truncation limit. Leave `alwaysLoad` unset
+for this server if you want Claude Code to defer its tools.
+
+OpenCode uses an `mcp` configuration map with `type: "local"`, a `command` array
+and an `environment` object (rather than the `mcpServers` / `env` example above).
+For the lightweight fallback, put `LITELLM_ADMIN_SCHEMA_MODE=discovery` in that
+server's `environment`. Remote configurations support bearer `headers` and can
+set `oauth: false` for this connector's API-key authentication.
+
+Compact results and exact detail reads work independently of native tool search;
+neither requires client-specific extensions or removes administrative actions.
+
 ## Host an HTTP connector
 
 For remote clients, run the same package with Streamable HTTP:
