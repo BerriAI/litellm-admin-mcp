@@ -3,6 +3,8 @@
 Connect an agent to your LiteLLM gateway to create keys, add model deployments,
 manage teams and budgets, and inspect spending.
 
+**Currently, this MCP requires a `proxy_admin` identity for all tools, including read-only tools.**
+
 This is a standalone MCP server. It calls your gateway's management API using
 your own proxy-admin credential. Your MCP client supplies the agent and model.
 
