@@ -8,7 +8,7 @@ import pytest
 from conftest import SPEC, data, session_for
 from litellm_admin_mcp.catalog import OPERATIONS
 from litellm_admin_mcp.config import Config
-from litellm_admin_mcp.gateway import Gateway
+from litellm_admin_mcp.gateway import Gateway, HELPERS
 from litellm_admin_mcp.schema import tool_schema
 from litellm_admin_mcp.server import create_http_app
 
@@ -16,7 +16,7 @@ from litellm_admin_mcp.server import create_http_app
 async def test_real_mcp_create_key_and_read_back(stub):
     async with session_for(stub) as session:
         tools = (await session.list_tools()).tools
-        assert {t.name for t in tools} == {"create_key", "list_keys", "add_model", "get_model", "reset_key_spend"}
+        assert {t.name for t in tools} == {"create_key", "list_keys", "add_model", "get_model", "reset_key_spend"} | HELPERS.keys()
         created = data(await session.call_tool("create_key", {"body": {"key_alias": "engineering", "max_budget": 100}}))
         assert created["key"].startswith("sk-created-for-")
         assert created["echo"] == "[credential redacted]"
