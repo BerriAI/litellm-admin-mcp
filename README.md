@@ -17,8 +17,11 @@ server to a client that supports local MCP processes:
     "litellm-admin": {
       "command": "uvx",
       "args": [
+        "--isolated",
+        "--refresh-package",
+        "litellm-admin-mcp",
         "--from",
-        "git+https://github.com/BerriAI/litellm-admin-mcp.git@v0.1.0",
+        "git+https://github.com/BerriAI/litellm-admin-mcp.git@main",
         "litellm-admin-mcp"
       ],
       "env": {
@@ -32,6 +35,20 @@ server to a client that supports local MCP processes:
 
 Use your client's secret storage if available, and keep its configuration private.
 The connector requires Python 3.12 or later; uv can install a compatible Python.
+
+This configuration automatically checks GitHub's `main` branch whenever your
+client starts the MCP server. After a change is merged, restart the MCP connection
+or your client to load it; no package version bump or manual reinstall is needed.
+`--refresh-package` refreshes this connector's cache, and `--isolated` prevents an
+older separately installed tool from taking precedence. See uv's
+[tool environments](https://docs.astral.sh/uv/concepts/tools/) and
+[cache refresh options](https://docs.astral.sh/uv/concepts/cache/).
+
+If you already configured a release such as `@v0.1.0`, replace its `args` with the
+example above once. Existing pinned configurations cannot update themselves from
+a README change. Startup requires access to GitHub; a running process keeps its
+current version until restarted. For a fixed deployment, replace `@main` with a
+release tag or full commit SHA and omit `--refresh-package` and its package name.
 
 Try:
 
@@ -193,9 +210,13 @@ For remote clients, run the same package with Streamable HTTP:
 ```sh
 export LITELLM_BASE_URL=https://your-gateway.example.com
 export LITELLM_MCP_PUBLIC_URL=https://admin-mcp.example.com
-uvx --from git+https://github.com/BerriAI/litellm-admin-mcp.git@v0.1.0 \
+uvx --isolated --refresh-package litellm-admin-mcp \
+  --from git+https://github.com/BerriAI/litellm-admin-mcp.git@main \
   litellm-admin-mcp --transport streamable-http --port 8080
 ```
+
+This command loads the latest `main` on each server start. Restart the hosted
+process to apply updates; connected clients can keep the same MCP URL.
 
 Put an HTTPS reverse proxy in front of port 8080. The MCP endpoint is `/mcp` and
 the process health endpoint is `/healthz`. The public URL configures accepted
@@ -230,6 +251,9 @@ docker run --rm -p 127.0.0.1:8080:8080 \
   -e LITELLM_MCP_PUBLIC_URL=https://admin-mcp.example.com \
   litellm-admin-mcp
 ```
+
+Docker packages the checked-out source into the image. Pull the desired revision,
+rebuild the image and redeploy the container to update it.
 
 ## Using it from the LiteLLM Admin Agent
 

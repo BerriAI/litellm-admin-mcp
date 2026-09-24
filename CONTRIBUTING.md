@@ -27,5 +27,7 @@ reads. Do not classify an operation as read-only merely to reduce friction:
 
 Release a reviewed commit by updating the package version, running CI, building
 with `uv build`, and attaching the wheel and source distribution to a matching
-GitHub tag. Client integrations should pin a release or commit. PyPI publishing
+GitHub tag. The default client launcher tracks `main` and refreshes the connector
+on each start, so merged changes do not require a version bump to reach those
+clients. Fixed deployments can pin a release or commit instead. PyPI publishing
 can be added through the organization's trusted publishing configuration.
