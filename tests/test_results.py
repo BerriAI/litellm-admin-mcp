@@ -111,6 +111,13 @@ def test_expiration_capacity_and_clear_do_not_evict_unexpired_results(monkeypatc
     ("get_key", {"key": "custom-key-without-prefix", "info": {}}),
     ("list_request_logs", {"history": "use sk-something here"}),
     ("get_key", {"metadata": json.dumps({"key": "custom-secret"})}),
+    ("list_models", {"data": [{"model_info": {"key": "sk-sensitive"}}]}),
+    ("get_model", {"data": [{"model_info": {"key": "sk-sensitive"}}]}),
+    ("list_models", {"data": [{"model_info": {"key": json.dumps({"key": "custom-secret"})}}]}),
+    ("list_models", {"data": [{"model_info": {"key": "openai/example", "metadata": {"key": "custom-secret"}}}]}),
+    ("list_models", {"data": [{"key": "custom-secret"}]}),
+    ("list_models", {"model_info": {"key": "custom-secret"}}),
+    ("list_request_logs", {"data": [{"model_info": {"key": "custom-secret"}}]}),
 ])
 def test_credentials_are_not_retained_in_result_store(source, value):
     store = ResultStore()

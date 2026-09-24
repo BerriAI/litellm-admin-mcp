@@ -68,19 +68,25 @@ def kind(value: Any) -> str:
     return "number"
 
 
-def contains_credential(value: Any) -> bool:
+def contains_credential(value: Any, *, source: str = "", path: tuple[str | int, ...] = ()) -> bool:
     if isinstance(value, dict):
         for key, child in value.items():
-            if (key.lower() in {"key", "api_key", "token", "access_token", "refresh_token", "password",
+            # Model-info reads use data[i].model_info.key for a catalog identifier.
+            # Exempt only that field's name; still scan its value for credentials.
+            catalog_key = (source in {"list_models", "get_model"} and len(path) == 3
+                           and path[0] == "data" and isinstance(path[1], int)
+                           and path[2] == "model_info" and key == "key")
+            if (not catalog_key
+                    and key.lower() in {"key", "api_key", "token", "access_token", "refresh_token", "password",
                                 "secret", "client_secret", "authorization", "authentication_token"}
                     and isinstance(child, str) and child
                     and child not in {"[redacted]", "[credential redacted]"}
                     and not re.fullmatch(r"[a-f0-9]{64}", child)):
                 return True
-            if contains_credential(child):
+            if contains_credential(child, source=source, path=(*path, key)):
                 return True
     elif isinstance(value, list):
-        return any(contains_credential(v) for v in value)
+        return any(contains_credential(v, source=source, path=(*path, i)) for i, v in enumerate(value))
     elif isinstance(value, str):
         if re.search(r"\bsk-[A-Za-z0-9_+-]+", value):
             return True
@@ -89,7 +95,7 @@ def contains_credential(value: Any) -> bool:
         except ValueError:
             return False
         if isinstance(nested, (dict, list)):
-            return contains_credential(nested)
+            return contains_credential(nested, source=source, path=path)
     return False
 
 
@@ -129,7 +135,7 @@ class ResultStore:
         raw = encode(value)
         # New credentials are delivered in the original full response, never
         # retained for later reads. Also exclude recognizable keys in log data.
-        if source in SECRET_RESULTS or contains_credential(value):
+        if source in SECRET_RESULTS or contains_credential(value, source=source):
             return None
         owner = self._owner(credential)
         if (len(raw) > MAX_RESULT_BYTES or self._bytes + len(raw) > self.max_bytes

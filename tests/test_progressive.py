@@ -114,6 +114,46 @@ async def test_compact_default_keeps_small_results_and_full_override(stub):
         assert data(await session.call_tool("list_keys", {"response": {"view": "full"}})) == {"keys": stub.keys}
 
 
+@pytest.mark.parametrize("name", ["list_models", "get_model"])
+async def test_model_catalog_identifiers_allow_lossless_paging(stub, name):
+    operation = next(op for op in OPERATIONS if op.name == name)
+    stub.spec = copy.deepcopy(SPEC)
+    stub.spec["paths"][operation.path] = {"get": {"operationId": operation.operation_id}}
+    models = [{"model_name": f"deployment-{i}", "model_info": {
+        "id": f"model-{i}", "key": f"openai/example-model-{i}",
+        "input_cost_per_token": 0, "supports_vision": False,
+        "metadata": {"uncommon": None, "details": "x" * 2000},
+    }} for i in range(40)]
+    expected = {"data": models, "total_count": len(models), "current_page": 1, "total_pages": 1}
+    original = stub.handle
+
+    def handle(request):
+        if request.url.path == operation.path:
+            stub.requests.append(request)
+            return httpx2.Response(200, json=expected)
+        return original(request)
+
+    stub.handle = handle
+    async with session_for(stub) as session:
+        first = data(await session.call_tool(name, {}))
+        assert first["format"] == "litellm-admin-page-v1"
+        assert len(json.dumps(first)) < 20000
+        assert data(await session.call_tool("read_admin_result", first["full_read"])) == expected
+        records = next(e for e in first["entries"] if e["key"] == "data")
+        current = data(await session.call_tool("read_admin_result", records["read"]))
+        restored = []
+        while True:
+            for entry in current["entries"]:
+                assert entry["complete"]
+                restored.append(entry["value"])
+            if not current["next"]:
+                break
+            current = data(await session.call_tool("read_admin_result", current["next"]))
+        assert restored == models
+        assert sum(r.url.path == operation.path for r in stub.requests) == 1
+        assert data(await session.call_tool(name, {"response": {"view": "full"}})) == expected
+
+
 async def test_full_write_result_can_be_read_without_repeating_write(stub):
     original_handler = stub.handle
     payload = {"status": "ok", "previous": {"spend": 20, "custom": "x" * 22000}}
